@@ -34,7 +34,7 @@ func DispatchKeyFrame(listLock *sync.RWMutex, peerConnections []PeerConnectionSt
 }
 
 // signalPeerConnections updates each PeerConnection so that it is getting all the expected media tracks.
-func SignalPeerConnections(listLock *sync.RWMutex, trackLocals map[string]*webrtc.TrackLocalStaticRTP, peerConnections []PeerConnectionState) { // nolint
+func SignalPeerConnections(listLock *sync.RWMutex, trackLocals map[string]*webrtc.TrackLocalStaticRTP, peerConnections []PeerConnectionState, trackNames map[string]string, streamNames map[string]string) { // nolint
 	listLock.Lock()
 	defer func() {
 		listLock.Unlock()
@@ -100,11 +100,23 @@ func SignalPeerConnections(listLock *sync.RWMutex, trackLocals map[string]*webrt
 				return true
 			}
 
-			log.Infof("Send offer to client: %v", offer)
+			// Create offer message with track names and stream names
+			offerData := map[string]interface{}{
+				"offer":      json.RawMessage(offerString),
+				"trackNames": trackNames,
+				"streamNames": streamNames,
+			}
+			offerDataString, err := json.Marshal(offerData)
+			if err != nil {
+				log.Errorf("Failed to marshal offer data: %v", err)
+				return true
+			}
+
+			log.Infof("Send offer to client with trackNames: %v", trackNames)
 
 			if err = peerConnections[i].Websocket.WriteJSON(&ws.WebsocketMessage{
 				Event: "offer",
-				Data:  string(offerString),
+				Data:  string(offerDataString),
 			}); err != nil {
 				return true
 			}
@@ -118,7 +130,7 @@ func SignalPeerConnections(listLock *sync.RWMutex, trackLocals map[string]*webrt
 			// Release the lock and attempt a sync in 3 seconds. We might be blocking a RemoveTrack or AddTrack
 			go func() {
 				time.Sleep(time.Second * 3)
-				SignalPeerConnections(listLock, trackLocals, peerConnections)
+				SignalPeerConnections(listLock, trackLocals, peerConnections, trackNames, streamNames)
 			}()
 
 			return

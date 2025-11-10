@@ -8,4 +8,5 @@ import (
 type PeerConnectionState struct {
 	PeerConnection *webrtc.PeerConnection
 	Websocket      *ws.ThreadSafeWriter
+	Name           string
 }

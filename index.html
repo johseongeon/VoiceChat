@@ -7,92 +7,410 @@
 
   <head>
     <meta charset="utf-8">
+    <style>
+      #loginForm {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: white;
+        padding: 20px;
+        border: 2px solid #4CAF50;
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        z-index: 1000;
+      }
+      #loginForm h2 {
+        margin-top: 0;
+        color: #2E7D32;
+      }
+      #loginForm input {
+        width: 100%;
+        padding: 10px;
+        margin: 10px 0;
+        border: 1px solid #ccc;
+        border-radius: 5px;
+        box-sizing: border-box;
+      }
+      #loginForm button {
+        width: 100%;
+        padding: 10px;
+        background: #4CAF50;
+        color: white;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 16px;
+      }
+      #loginForm button:hover {
+        background: #45a049;
+      }
+      #mainContent {
+        display: none;
+      }
+    </style>
   </head>
   <body>
-    <h3> Local Video </h3>
-    <video id="localVideo" width="160" height="120" autoplay muted></video> <br />
+    <div id="loginForm">
+      <h2>음성 채팅 방 입장</h2>
+      <input type="text" id="roomIdInput" placeholder="방 ID를 입력하세요 (Room ID)" autofocus>
+      <input type="text" id="userNameInput" placeholder="이름을 입력하세요 (Your Name)">
+      <button onclick="handleLogin()">입장하기</button>
+    </div>
 
-    <h3> Remote Video </h3>
-    <div id="remoteVideos"></div> <br />
+    <div id="mainContent">
+      <div id="localAudioContainer"></div> <br />
 
-    <h3> Logs </h3>
-    <div id="logs"></div>
-
+      <div id="remoteVideos"></div> <br />
+    </div>
 
   </body>
 
   <script>
-    navigator.mediaDevices.getUserMedia({ audio: true })
-    .then(stream => {
-      let pc = new RTCPeerConnection()
-      pc.ontrack = function (event) {
-        if (event.track.kind !== 'audio') { return }
+    // Handle login form submission
+    function handleLogin() {
+      let roomIdInput = document.getElementById('roomIdInput')
+      let userNameInput = document.getElementById('userNameInput')
+      
+      let roomId = roomIdInput.value.trim()
+      if (!roomId) {
+        alert("방 ID를 입력해주세요.")
+        roomIdInput.focus()
+        return
+      }
 
-        let el = document.createElement('audio')
-        el.srcObject = event.streams[0]
-        el.autoplay = true
-        el.controls = true
-        document.getElementById('remoteVideos').appendChild(el)
+      let userName = userNameInput.value.trim()
+      if (!userName) {
+        userName = "Anonymous"
+      }
 
-        event.track.onmute = function(event) {
-          el.play()
+      // Hide login form and show main content
+      document.getElementById('loginForm').style.display = 'none'
+      document.getElementById('mainContent').style.display = 'block'
+
+      // Initialize app with user inputs
+      initializeApp(roomId, userName)
+    }
+
+    // Allow Enter key to submit form
+    document.addEventListener('DOMContentLoaded', function() {
+      document.getElementById('roomIdInput').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+          document.getElementById('userNameInput').focus()
         }
+      })
+      document.getElementById('userNameInput').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+          handleLogin()
+        }
+      })
+    })
 
-        event.streams[0].onremovetrack = ({track}) => {
-          if (el.parentNode) {
-            el.parentNode.removeChild(el)
+    // Initialize app with room ID and user name
+    function initializeApp(roomId, userName) {
+      // Store track names mapping
+      let trackNames = {}
+      let streamNames = {}
+      // Store track containers by track ID for name updates
+      let trackContainers = {}
+
+      // Function to update track name
+      function updateTrackName(trackId, name) {
+        if (trackContainers[trackId] && trackContainers[trackId].nameLabel) {
+          trackContainers[trackId].nameLabel.textContent = name
+        }
+      }
+
+      // Function to analyze audio level and update background color
+      function setupAudioLevelAnalysis(container, audioStream, trackId) {
+        try {
+          const audioContext = new (window.AudioContext || window.webkitAudioContext)()
+          
+          // Resume audio context if suspended (required by some browsers)
+          if (audioContext.state === 'suspended') {
+            audioContext.resume().catch(console.error)
+          }
+
+          const analyser = audioContext.createAnalyser()
+          const microphone = audioContext.createMediaStreamSource(audioStream)
+          const dataArray = new Uint8Array(analyser.frequencyBinCount)
+
+          analyser.fftSize = 256
+          analyser.smoothingTimeConstant = 0.3 // Lower value for more responsive detection
+          analyser.minDecibels = -90
+          analyser.maxDecibels = -10
+          microphone.connect(analyser)
+
+          // Store analyser and animation frame ID for cleanup
+          trackContainers[trackId].analyser = analyser
+          trackContainers[trackId].audioContext = audioContext
+          trackContainers[trackId].dataArray = dataArray
+
+          // Default background color (white)
+          const defaultBgColor = '#ffffff'
+          trackContainers[trackId].defaultBgColor = defaultBgColor
+          const activeBgColor = '#c8e6c9' // Light green for active audio
+
+          // Store monitoring flag for cleanup
+          trackContainers[trackId].isMonitoring = true
+
+          function checkAudioLevel() {
+            if (!trackContainers[trackId] || !container.parentNode || !trackContainers[trackId].isMonitoring) {
+              return // Container was removed or monitoring stopped
+            }
+
+            analyser.getByteFrequencyData(dataArray)
+            
+            // Calculate average volume from frequency data
+            let sum = 0
+            let count = 0
+            for (let i = 0; i < dataArray.length; i++) {
+              sum += dataArray[i]
+              count++
+            }
+            const average = count > 0 ? sum / count : 0
+            
+            // Threshold for detecting active audio (adjust as needed)
+            // Lower values = more sensitive, higher values = less sensitive
+            const threshold = 4
+            
+            // Update background color based on audio level
+            if (average > threshold) {
+              container.style.backgroundColor = activeBgColor
+            } else {
+              container.style.backgroundColor = defaultBgColor
+            }
+
+            // Continue monitoring
+            if (trackContainers[trackId] && trackContainers[trackId].isMonitoring) {
+              trackContainers[trackId].animationFrameId = requestAnimationFrame(checkAudioLevel)
+            }
+          }
+
+          // Start monitoring
+          checkAudioLevel()
+        } catch (error) {
+          console.error('Error setting up audio level analysis:', error)
+          // If audio analysis fails, just keep the default background
+        }
+      }
+
+      navigator.mediaDevices.getUserMedia({ audio: true })
+      .then(stream => {
+        let pc = new RTCPeerConnection()
+        pc.ontrack = function (event) {
+          if (event.track.kind !== 'audio') { return }
+
+          // Get peer name for this track (may be "Unknown" initially)
+          let trackId = event.track.id
+          let streamId = event.streams[0] ? event.streams[0].id : null
+          let peerName = trackNames[trackId] || (streamId && streamNames[streamId]) || "Unknown"
+
+          // Create container for audio and name
+          let container = document.createElement('div')
+          container.style.marginBottom = '10px'
+          container.style.border = '1px solid #ccc'
+          container.style.padding = '10px'
+          container.style.borderRadius = '5px'
+          container.style.backgroundColor = '#ffffff' // Default white background
+          container.style.transition = 'background-color 0.3s ease'
+
+          // Create name label
+          let nameLabel = document.createElement('div')
+          nameLabel.textContent = peerName
+          nameLabel.style.fontWeight = 'bold'
+          nameLabel.style.marginBottom = '5px'
+          nameLabel.style.color = '#333'
+
+          // Create audio element
+          let el = document.createElement('audio')
+          el.srcObject = event.streams[0]
+          el.autoplay = true
+          el.controls = true
+          el.style.width = '100%'
+
+          container.appendChild(nameLabel)
+          container.appendChild(el)
+          document.getElementById('remoteVideos').appendChild(container)
+
+          // Store container reference for name updates
+          trackContainers[event.track.id] = {
+            container: container,
+            nameLabel: nameLabel,
+            audio: el,
+            streamId: streamId
+          }
+          
+          // Setup audio level analysis for visual feedback
+          if (event.streams[0]) {
+            setupAudioLevelAnalysis(container, event.streams[0], event.track.id)
+          }
+          
+          // Try to update name if streamNames is available
+          if (streamId && streamNames[streamId] && peerName === "Unknown") {
+            updateTrackName(trackId, streamNames[streamId])
+          }
+
+          // Store reference to container for cleanup
+          event.track.onended = function() {
+            // Cleanup audio analysis
+            if (trackContainers[event.track.id]) {
+              trackContainers[event.track.id].isMonitoring = false
+              if (trackContainers[event.track.id].animationFrameId) {
+                cancelAnimationFrame(trackContainers[event.track.id].animationFrameId)
+              }
+              if (trackContainers[event.track.id].audioContext) {
+                trackContainers[event.track.id].audioContext.close().catch(console.error)
+              }
+            }
+            if (container.parentNode) {
+              container.parentNode.removeChild(container)
+            }
+            delete trackContainers[event.track.id]
+          }
+
+          event.track.onmute = function(event) {
+            el.play()
+          }
+
+          event.streams[0].onremovetrack = ({track}) => {
+            // Cleanup audio analysis
+            if (trackContainers[track.id]) {
+              trackContainers[track.id].isMonitoring = false
+              if (trackContainers[track.id].animationFrameId) {
+                cancelAnimationFrame(trackContainers[track.id].animationFrameId)
+              }
+              if (trackContainers[track.id].audioContext) {
+                trackContainers[track.id].audioContext.close().catch(console.error)
+              }
+            }
+            if (container.parentNode) {
+              container.parentNode.removeChild(container)
+            }
+            delete trackContainers[track.id]
           }
         }
-      }
 
-      //document.getElementById('localVideo').srcObject = stream
-      stream.getTracks().forEach(track => pc.addTrack(track, stream))
+        // Display local audio with name
+        let localContainer = document.createElement('div')
+        localContainer.style.marginBottom = '10px'
+        localContainer.style.border = '1px solid #4CAF50'
+        localContainer.style.padding = '10px'
+        localContainer.style.borderRadius = '5px'
+        localContainer.style.backgroundColor = '#f0f8f0'
 
-      let ws = new WebSocket("{{.}}")
-      pc.onicecandidate = e => {
-        if (!e.candidate) {
-          return
+        let localNameLabel = document.createElement('div')
+        localNameLabel.textContent = userName + ' (You)'
+        localNameLabel.style.fontWeight = 'bold'
+        localNameLabel.style.marginBottom = '5px'
+        localNameLabel.style.color = '#2E7D32'
+
+        let localAudio = document.createElement('audio')
+        localAudio.srcObject = stream
+        localAudio.autoplay = true
+        localAudio.muted = true
+        localAudio.controls = true
+        localAudio.style.width = '100%'
+
+        localContainer.appendChild(localNameLabel)
+        localContainer.appendChild(localAudio)
+        document.getElementById('localAudioContainer').appendChild(localContainer)
+
+        stream.getTracks().forEach(track => pc.addTrack(track, stream))
+
+        let ws = new WebSocket("{{.}}")
+        
+        // Send room_id and name when connection opens
+        ws.onopen = function() {
+          ws.send(JSON.stringify({
+            event: 'join', 
+            data: JSON.stringify({roomId: roomId, name: userName})
+          }))
+          console.log('Joined room: ' + roomId + ' as ' + userName)
         }
 
-        ws.send(JSON.stringify({event: 'candidate', data: JSON.stringify(e.candidate)}))
-      }
-
-      ws.onclose = function(evt) {
-        window.alert("Websocket has closed")
-      }
-
-      ws.onmessage = function(evt) {
-        let msg = JSON.parse(evt.data)
-        if (!msg) {
-          return console.log('failed to parse msg')
-        }
-
-        switch (msg.event) {
-          case 'offer':
-            let offer = JSON.parse(msg.data)
-            if (!offer) {
-              return console.log('failed to parse answer')
-            }
-            pc.setRemoteDescription(offer)
-            pc.createAnswer().then(answer => {
-              pc.setLocalDescription(answer)
-              ws.send(JSON.stringify({event: 'answer', data: JSON.stringify(answer)}))
-            })
+        pc.onicecandidate = e => {
+          if (!e.candidate) {
             return
+          }
 
-          case 'candidate':
-            let candidate = JSON.parse(msg.data)
-            if (!candidate) {
-              return console.log('failed to parse candidate')
-            }
-
-            pc.addIceCandidate(candidate)
+          ws.send(JSON.stringify({event: 'candidate', data: JSON.stringify(e.candidate)}))
         }
-      }
 
-      ws.onerror = function(evt) {
-        console.log("ERROR: " + evt.data)
-      }
-    }).catch(window.alert)
+        ws.onclose = function(evt) {
+          window.alert("Websocket has closed")
+        }
+
+        ws.onmessage = function(evt) {
+          let msg = JSON.parse(evt.data)
+          if (!msg) {
+            return console.log('failed to parse msg')
+          }
+
+          switch (msg.event) {
+            case 'offer':
+              let offerData = JSON.parse(msg.data)
+              if (!offerData) {
+                return console.log('failed to parse offer data')
+              }
+              
+              // Update track names and stream names mapping
+              if (offerData.trackNames) {
+                // Merge with existing trackNames (don't overwrite, just update)
+                Object.assign(trackNames, offerData.trackNames)
+              }
+              
+              if (offerData.streamNames) {
+                Object.assign(streamNames, offerData.streamNames)
+              }
+              
+              // Update names for already added tracks
+              for (let trackId in trackContainers) {
+                let name = trackNames[trackId]
+                if (!name) {
+                  // Try to find by stream ID
+                  let container = trackContainers[trackId]
+                  if (container && container.streamId && streamNames[container.streamId]) {
+                    name = streamNames[container.streamId]
+                  }
+                }
+                if (name && trackContainers[trackId].nameLabel.textContent === "Unknown") {
+                  updateTrackName(trackId, name)
+                }
+              }
+
+              // Extract offer from offerData
+              let offer = offerData.offer
+              if (!offer) {
+                return console.log('failed to parse offer')
+              }
+              
+              pc.setRemoteDescription(offer)
+              pc.createAnswer().then(answer => {
+                pc.setLocalDescription(answer)
+                ws.send(JSON.stringify({event: 'answer', data: JSON.stringify(answer)}))
+              })
+              return
+
+            case 'candidate':
+              let candidate = JSON.parse(msg.data)
+              if (!candidate) {
+                return console.log('failed to parse candidate')
+              }
+
+              pc.addIceCandidate(candidate)
+          }
+        }
+
+        ws.onerror = function(evt) {
+          console.log("ERROR: " + evt.data)
+        }
+      }).catch(function(error) {
+        alert("마이크 접근 권한이 필요합니다: " + error.message)
+        // Show login form again on error
+        document.getElementById('loginForm').style.display = 'block'
+        document.getElementById('mainContent').style.display = 'none'
+      })
+    }
   </script>
 </html>

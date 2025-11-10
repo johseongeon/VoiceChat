@@ -25,6 +25,15 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
+// RoomState represents the state of a room
+type RoomState struct {
+	PeerConnections []peer.PeerConnectionState
+	TrackLocals     map[string]*webrtc.TrackLocalStaticRTP
+	TrackNames      map[string]string // trackID -> peer name mapping
+	StreamNames     map[string]string // streamID -> peer name mapping (fallback)
+	Lock            sync.RWMutex
+}
+
 // nolint
 var (
 	// flag.String(name, value, usage)
@@ -35,10 +44,9 @@ var (
 	}
 	indexTemplate = &template.Template{}
 
-	// lock for peerConnections and trackLocals
-	listLock        sync.RWMutex
-	peerConnections []peer.PeerConnectionState
-	trackLocals     map[string]*webrtc.TrackLocalStaticRTP
+	// lock for rooms map
+	roomsLock sync.RWMutex
+	rooms     map[string]*RoomState
 
 	log = logging.NewDefaultLoggerFactory().NewLogger("sfu-ws")
 )
@@ -47,8 +55,8 @@ func main() {
 	// Parse the flags passed to program
 	flag.Parse()
 
-	// Init other state
-	trackLocals = map[string]*webrtc.TrackLocalStaticRTP{}
+	// Init rooms map
+	rooms = make(map[string]*RoomState)
 
 	// Read index.html from disk into memory, serve whenever anyone requests /
 	indexHTML, err := os.ReadFile("index.html")
@@ -67,10 +75,23 @@ func main() {
 		}
 	})
 
-	// request a keyframe every 3 seconds
+	// request a keyframe every 3 seconds for all rooms
 	go func() {
 		for range time.NewTicker(time.Second * 3).C {
-			peer.DispatchKeyFrame(&listLock, peerConnections)
+			roomsLock.RLock()
+			roomList := make([]*RoomState, 0, len(rooms))
+			for _, room := range rooms {
+				roomList = append(roomList, room)
+			}
+			roomsLock.RUnlock()
+
+			for _, room := range roomList {
+				// DispatchKeyFrame will lock internally, so we don't need to lock here
+				room.Lock.RLock()
+				peerConnections := room.PeerConnections
+				room.Lock.RUnlock()
+				peer.DispatchKeyFrame(&room.Lock, peerConnections)
+			}
 		}
 	}()
 
@@ -78,13 +99,52 @@ func main() {
 	if err = http.ListenAndServe(*_addr, nil); err != nil { //nolint: gosec
 		log.Errorf("Failed to start http server: %v", err)
 	}
-	var s []int
-	example(s, 1, 2, 3)
 }
 
-func example(slice []int, items ...int) {
-	for _, item := range items {
-		slice = append(slice, item)
+// getOrCreateRoom gets an existing room or creates a new one
+func getOrCreateRoom(roomID string) *RoomState {
+	roomsLock.Lock()
+	defer roomsLock.Unlock()
+
+	if room, exists := rooms[roomID]; exists {
+		return room
+	}
+
+	room := &RoomState{
+		PeerConnections: make([]peer.PeerConnectionState, 0),
+		TrackLocals:     make(map[string]*webrtc.TrackLocalStaticRTP),
+		TrackNames:      make(map[string]string),
+		StreamNames:     make(map[string]string),
+	}
+	rooms[roomID] = room
+	return room
+}
+
+// removePeerFromRoom removes a peer from a room
+func removePeerFromRoom(roomID string, peerConnection *webrtc.PeerConnection) {
+	roomsLock.RLock()
+	room, exists := rooms[roomID]
+	roomsLock.RUnlock()
+
+	if !exists {
+		return
+	}
+
+	room.Lock.Lock()
+	defer room.Lock.Unlock()
+
+	for i, pc := range room.PeerConnections {
+		if pc.PeerConnection == peerConnection {
+			room.PeerConnections = append(room.PeerConnections[:i], room.PeerConnections[i+1:]...)
+			break
+		}
+	}
+
+	// If room is empty, optionally remove it
+	if len(room.PeerConnections) == 0 && len(room.TrackLocals) == 0 {
+		roomsLock.Lock()
+		delete(rooms, roomID)
+		roomsLock.Unlock()
 	}
 }
 
@@ -103,6 +163,55 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 	// When this frame returns close the Websocket
 	defer c.Close() //nolint
 
+	var roomID string
+	var userName string
+	var room *RoomState
+
+	// Wait for room_id and name from client
+	message := &ws.WebsocketMessage{}
+	_, raw, err := c.ReadMessage()
+	if err != nil {
+		log.Errorf("Failed to read room_id message: %v", err)
+		return
+	}
+
+	log.Infof("Got initial message: %s", raw)
+
+	if err := json.Unmarshal(raw, &message); err != nil {
+		log.Errorf("Failed to unmarshal json to message: %v", err)
+		return
+	}
+
+	if message.Event != "join" {
+		log.Errorf("Expected 'join' event with room_id, got: %s", message.Event)
+		return
+	}
+
+	// Parse join data as JSON: {roomId: "...", name: "..."}
+	var joinData struct {
+		RoomID string `json:"roomId"`
+		Name   string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(message.Data), &joinData); err != nil {
+		log.Errorf("Failed to unmarshal join data: %v", err)
+		return
+	}
+
+	roomID = joinData.RoomID
+	userName = joinData.Name
+
+	if roomID == "" {
+		log.Errorf("room_id is empty")
+		return
+	}
+
+	if userName == "" {
+		userName = "Anonymous"
+	}
+
+	log.Infof("Client joining room: %s with name: %s", roomID, userName)
+	room = getOrCreateRoom(roomID)
+
 	// Create new PeerConnection
 	peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{})
 	if err != nil {
@@ -112,7 +221,10 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 	}
 
 	// When this frame returns close the PeerConnection
-	defer peerConnection.Close() //nolint
+	defer func() {
+		peerConnection.Close()
+		removePeerFromRoom(roomID, peerConnection)
+	}()
 
 	// Accept one audio  track incoming
 	for _, typ := range []webrtc.RTPCodecType{webrtc.RTPCodecTypeAudio} {
@@ -125,12 +237,13 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 		}
 	}
 
-	// Add our new PeerConnection to global list
-	listLock.Lock()
-	peerConnections = append(peerConnections, peer.PeerConnectionState{
+	// Add our new PeerConnection to room
+	room.Lock.Lock()
+	room.PeerConnections = append(room.PeerConnections, peer.PeerConnectionState{
 		PeerConnection: peerConnection,
-		Websocket:      c})
-	listLock.Unlock()
+		Websocket:      c,
+		Name:           userName})
+	room.Lock.Unlock()
 
 	// Trickle ICE. Emit server candidate to client
 	peerConnection.OnICECandidate(func(i *webrtc.ICECandidate) {
@@ -156,7 +269,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 		}
 	})
 
-	// If PeerConnection is closed remove it from global list
+	// If PeerConnection is closed remove it from room
 	peerConnection.OnConnectionStateChange(func(p webrtc.PeerConnectionState) {
 		log.Infof("Connection state change: %s", p)
 
@@ -166,7 +279,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 				log.Errorf("Failed to close PeerConnection: %v", err)
 			}
 		case webrtc.PeerConnectionStateClosed:
-			peer.SignalPeerConnections(&listLock, trackLocals, peerConnections)
+			peer.SignalPeerConnections(&room.Lock, room.TrackLocals, room.PeerConnections, room.TrackNames, room.StreamNames)
 		default:
 		}
 	})
@@ -174,9 +287,45 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 	peerConnection.OnTrack(func(t *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
 		log.Infof("Got remote track: Kind=%s, ID=%s, PayloadType=%d", t.Kind(), t.ID(), t.PayloadType())
 
-		// Create a track to fan out our incoming video to all peers
-		trackLocal := track.AddTrack(t, &listLock, trackLocals, peerConnections)
-		defer track.RemoveTrack(trackLocal, &listLock, trackLocals, peerConnections)
+		// Find the peer name for this track
+		var trackOwnerName string
+		room.Lock.RLock()
+		for _, pc := range room.PeerConnections {
+			if pc.PeerConnection == peerConnection {
+				trackOwnerName = pc.Name
+				break
+			}
+		}
+		room.Lock.RUnlock()
+
+		// Map track ID and stream ID to peer name
+		trackID := t.ID()
+		streamID := t.StreamID()
+		room.Lock.Lock()
+		room.TrackNames[trackID] = trackOwnerName
+		room.StreamNames[streamID] = trackOwnerName
+		log.Infof("Mapped track ID %s and stream ID %s to peer name: %s", trackID, streamID, trackOwnerName)
+		room.Lock.Unlock()
+
+		// Create a track to fan out our incoming audio to all peers in the room
+		trackLocal := track.AddTrack(t, &room.Lock, room.TrackLocals, room.PeerConnections, room.TrackNames, room.StreamNames)
+		
+		// Also map the local track ID (in case it's different)
+		localTrackID := trackLocal.ID()
+		if localTrackID != trackID {
+			room.Lock.Lock()
+			room.TrackNames[localTrackID] = trackOwnerName
+			log.Infof("Also mapped local track ID %s to peer name: %s", localTrackID, trackOwnerName)
+			room.Lock.Unlock()
+		}
+
+		defer func() {
+			room.Lock.Lock()
+			delete(room.TrackNames, t.ID())
+			delete(room.StreamNames, streamID)
+			room.Lock.Unlock()
+			track.RemoveTrack(trackLocal, &room.Lock, room.TrackLocals, room.PeerConnections, room.TrackNames, room.StreamNames)
+		}()
 
 		buf := make([]byte, 1500)
 		rtpPkt := &rtp.Packet{}
@@ -207,9 +356,9 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 	})
 
 	// Signal for the new PeerConnection
-	peer.SignalPeerConnections(&listLock, trackLocals, peerConnections)
+	peer.SignalPeerConnections(&room.Lock, room.TrackLocals, room.PeerConnections, room.TrackNames, room.StreamNames)
 
-	message := &ws.WebsocketMessage{}
+	// Continue reading messages
 	for {
 		_, raw, err := c.ReadMessage()
 		if err != nil {
