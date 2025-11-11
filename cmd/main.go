@@ -309,7 +309,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 
 		// Create a track to fan out our incoming audio to all peers in the room
 		trackLocal := track.AddTrack(t, &room.Lock, room.TrackLocals, room.PeerConnections, room.TrackNames, room.StreamNames)
-		
+
 		// Also map the local track ID (in case it's different)
 		localTrackID := trackLocal.ID()
 		if localTrackID != trackID {

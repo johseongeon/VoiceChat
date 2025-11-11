@@ -102,8 +102,8 @@ func SignalPeerConnections(listLock *sync.RWMutex, trackLocals map[string]*webrt
 
 			// Create offer message with track names and stream names
 			offerData := map[string]interface{}{
-				"offer":      json.RawMessage(offerString),
-				"trackNames": trackNames,
+				"offer":       json.RawMessage(offerString),
+				"trackNames":  trackNames,
 				"streamNames": streamNames,
 			}
 			offerDataString, err := json.Marshal(offerData)
