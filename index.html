@@ -406,10 +406,7 @@
           console.log("ERROR: " + evt.data)
         }
       }).catch(function(error) {
-        alert("마이크 접근 권한이 필요합니다: " + error.message)
-        // Show login form again on error
-        document.getElementById('loginForm').style.display = 'block'
-        document.getElementById('mainContent').style.display = 'none'
+        console.error("마이크 접근 실패 (Microphone access failed): ", error)
       })
     }
   </script>
