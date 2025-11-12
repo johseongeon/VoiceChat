@@ -62,6 +62,7 @@ func SignalPeerConnections(listLock *sync.RWMutex, trackLocals map[string]*webrt
 				// If we have a RTPSender that doesn't map to a existing track remove and signal
 				if _, ok := trackLocals[sender.Track().ID()]; !ok {
 					if err := peerConnections[i].PeerConnection.RemoveTrack(sender); err != nil {
+
 						return true
 					}
 				}
@@ -80,6 +81,7 @@ func SignalPeerConnections(listLock *sync.RWMutex, trackLocals map[string]*webrt
 			for trackID := range trackLocals {
 				if _, ok := existingSenders[trackID]; !ok {
 					if _, err := peerConnections[i].PeerConnection.AddTrack(trackLocals[trackID]); err != nil {
+						log.Infof("Failed to add track to PeerConnection: %v", err)
 						return true
 					}
 				}
@@ -87,10 +89,12 @@ func SignalPeerConnections(listLock *sync.RWMutex, trackLocals map[string]*webrt
 
 			offer, err := peerConnections[i].PeerConnection.CreateOffer(nil)
 			if err != nil {
+				log.Infof("Failed to create offer: %v", err)
 				return true
 			}
 
 			if err = peerConnections[i].PeerConnection.SetLocalDescription(offer); err != nil {
+				log.Infof("Failed to set local description: %v", err)
 				return true
 			}
 
