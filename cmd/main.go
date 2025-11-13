@@ -163,6 +163,24 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 	// When this frame returns close the Websocket
 	defer c.Close() //nolint
 
+	c.SetReadDeadline(time.Now().Add(60 * time.Second))
+	c.SetPongHandler(func(string) error {
+		c.SetReadDeadline(time.Now().Add(60 * time.Second))
+		return nil
+	})
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			<-ticker.C
+			if err := c.WriteControl(websocket.PingMessage, []byte("ping"), time.Now().Add(10*time.Second)); err != nil {
+				log.Errorf("ping error: %v", err)
+				c.Close()
+				return
+			}
+		}
+	}()
+
 	var roomID string
 	var userName string
 	var room *RoomState
