@@ -213,7 +213,12 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 	room = getOrCreateRoom(roomID)
 
 	// Create new PeerConnection
-	peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{
+		ICEServers: []webrtc.ICEServer{
+			{
+				URLs: []string{"stun:stun.l.google.com:19302"},
+			},
+		}})
 	if err != nil {
 		log.Errorf("Failed to creates a PeerConnection: %v", err)
 
