@@ -18,9 +18,9 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/johseongeon/WHIPTube/webrtc/peer"
-	"github.com/johseongeon/WHIPTube/webrtc/track"
-	"github.com/johseongeon/WHIPTube/ws"
+	"github.com/johseongeon/VoiceChat/webrtc/peer"
+	"github.com/johseongeon/VoiceChat/webrtc/track"
+	"github.com/johseongeon/VoiceChat/ws"
 	"github.com/pion/logging"
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"

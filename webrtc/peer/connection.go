@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/johseongeon/WHIPTube/ws"
+	"github.com/johseongeon/VoiceChat/ws"
 	"github.com/pion/logging"
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"

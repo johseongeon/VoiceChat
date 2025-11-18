@@ -1,4 +1,4 @@
-module github.com/johseongeon/WHIPTube
+module github.com/johseongeon/VoiceChat
 
 go 1.24.2
 

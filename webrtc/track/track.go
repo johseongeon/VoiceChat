@@ -3,7 +3,7 @@ package track
 import (
 	"sync"
 
-	"github.com/johseongeon/WHIPTube/webrtc/peer"
+	"github.com/johseongeon/VoiceChat/webrtc/peer"
 	"github.com/pion/webrtc/v4"
 )
 

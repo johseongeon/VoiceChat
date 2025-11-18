@@ -1,7 +1,7 @@
 package peer
 
 import (
-	"github.com/johseongeon/WHIPTube/ws"
+	"github.com/johseongeon/VoiceChat/ws"
 	"github.com/pion/webrtc/v4"
 )
 
