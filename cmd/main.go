@@ -193,7 +193,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 		return
 	}
 
-	log.Errorf("Got initial message: %s", raw)
+	log.Infof("Got initial message: %s", raw)
 
 	if err := json.Unmarshal(raw, &message); err != nil {
 		log.Errorf("Failed to unmarshal json to message: %v", err)
@@ -227,7 +227,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 		userName = "Anonymous"
 	}
 
-	log.Errorf("Client joining room: %s with name: %s", roomID, userName)
+	log.Infof("Client joining room: %s with name: %s", roomID, userName)
 	room = getOrCreateRoom(roomID)
 
 	// Create new PeerConnection
@@ -282,7 +282,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 			return
 		}
 
-		log.Errorf("Send candidate to client: %s", candidateString)
+		log.Infof("Send candidate to client: %s", candidateString)
 
 		if writeErr := c.WriteJSON(&ws.WebsocketMessage{
 			Event: "candidate",
@@ -294,7 +294,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 
 	// If PeerConnection is closed remove it from room
 	peerConnection.OnConnectionStateChange(func(p webrtc.PeerConnectionState) {
-		log.Errorf("Connection state change: %s", p)
+		log.Infof("Connection state change: %s", p)
 
 		switch p {
 		case webrtc.PeerConnectionStateFailed:
@@ -308,7 +308,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 	})
 
 	peerConnection.OnTrack(func(t *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
-		log.Errorf("Got remote track: Kind=%s, ID=%s, PayloadType=%d", t.Kind(), t.ID(), t.PayloadType())
+		log.Infof("Got remote track: Kind=%s, ID=%s, PayloadType=%d", t.Kind(), t.ID(), t.PayloadType())
 
 		// Find the peer name for this track
 		var trackOwnerName string
@@ -327,7 +327,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 		room.Lock.Lock()
 		room.TrackNames[trackID] = trackOwnerName
 		room.StreamNames[streamID] = trackOwnerName
-		log.Errorf("Mapped track ID %s and stream ID %s to peer name: %s", trackID, streamID, trackOwnerName)
+		log.Infof("Mapped track ID %s and stream ID %s to peer name: %s", trackID, streamID, trackOwnerName)
 		room.Lock.Unlock()
 
 		// Create a track to fan out our incoming audio to all peers in the room
@@ -338,7 +338,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 		if localTrackID != trackID {
 			room.Lock.Lock()
 			room.TrackNames[localTrackID] = trackOwnerName
-			log.Errorf("Also mapped local track ID %s to peer name: %s", localTrackID, trackOwnerName)
+			log.Infof("Also mapped local track ID %s to peer name: %s", localTrackID, trackOwnerName)
 			room.Lock.Unlock()
 		}
 
@@ -375,7 +375,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 	})
 
 	peerConnection.OnICEConnectionStateChange(func(is webrtc.ICEConnectionState) {
-		log.Errorf("ICE connection state changed: %s", is)
+		log.Infof("ICE connection state changed: %s", is)
 	})
 
 	// Signal for the new PeerConnection
@@ -390,7 +390,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 			return
 		}
 
-		log.Errorf("Got message: %s", raw)
+		log.Infof("Got message: %s", raw)
 
 		if err := json.Unmarshal(raw, &message); err != nil {
 			log.Errorf("Failed to unmarshal json to message: %v", err)
@@ -407,7 +407,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 				return
 			}
 
-			log.Errorf("Got candidate: %v", candidate)
+			log.Infof("Got candidate: %v", candidate)
 
 			if err := peerConnection.AddICECandidate(candidate); err != nil {
 				log.Errorf("Failed to add ICE candidate: %v", err)
@@ -422,7 +422,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 				return
 			}
 
-			log.Errorf("Got answer: %v", answer)
+			log.Infof("Got answer: %v", answer)
 
 			if err := peerConnection.SetRemoteDescription(answer); err != nil {
 				log.Errorf("Failed to set remote description: %v", err)

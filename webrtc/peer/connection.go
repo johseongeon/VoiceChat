@@ -116,7 +116,7 @@ func SignalPeerConnections(listLock *sync.RWMutex, trackLocals map[string]*webrt
 				return true
 			}
 
-			log.Errorf("Send offer to client with trackNames: %v", trackNames)
+			log.Infof("Send offer to client with trackNames: %v", trackNames)
 
 			if err = peerConnections[i].Websocket.WriteJSON(&ws.WebsocketMessage{
 				Event: "offer",
